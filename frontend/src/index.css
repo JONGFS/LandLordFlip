@@ -8,61 +8,65 @@
   --color-black-bg: #0f0f0f;
 }
 
-body {
-  background-color: var(--color-black-bg);
-  color: #ffffff;
-  font-family: var(--font-sans);
-  font-size: 14px;
-  -webkit-font-smoothing: antialiased;
+@layer base {
+  body {
+    background-color: var(--color-black-bg);
+    color: #ffffff;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4, .logo {
+    font-family: var(--font-serif);
+  }
 }
 
-h1, h2, h3, h4, .logo {
-  font-family: var(--font-serif);
-}
+@layer components {
+  .card-surface {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 0.5px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+  }
 
-.card-surface {
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 0.5px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-}
+  .input-field {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 0.5px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 12px;
+    color: white;
+    transition: border-color 0.2s;
+  }
 
-.input-field {
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 0.5px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 12px;
-  color: white;
-  transition: border-color 0.2s;
-}
+  .input-field:focus {
+    outline: none;
+    border-color: var(--color-coral);
+  }
 
-.input-field:focus {
-  outline: none;
-  border-color: var(--color-coral);
-}
+  .btn-coral {
+    background-color: var(--color-coral);
+    color: white;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-weight: 500;
+    transition: opacity 0.2s;
+  }
 
-.btn-coral {
-  background-color: var(--color-coral);
-  color: white;
-  border-radius: 8px;
-  padding: 10px 20px;
-  font-weight: 500;
-  transition: opacity 0.2s;
-}
+  .btn-coral:hover {
+    opacity: 0.9;
+  }
 
-.btn-coral:hover {
-  opacity: 0.9;
-}
+  .btn-ghost {
+    background-color: transparent;
+    border: 0.5px solid rgba(255, 255, 255, 0.2);
+    color: white;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-weight: 500;
+    transition: background-color 0.2s;
+  }
 
-.btn-ghost {
-  background-color: transparent;
-  border: 0.5px solid rgba(255, 255, 255, 0.2);
-  color: white;
-  border-radius: 8px;
-  padding: 10px 20px;
-  font-weight: 500;
-  transition: background-color 0.2s;
-}
-
-.btn-ghost:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  .btn-ghost:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
 }

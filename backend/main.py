@@ -2,21 +2,22 @@ import json
 import os
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
+# Remote branch models + storage
+from backend.models import ListingInput, NormalizedListing
+from backend.storage import store_listing, get_listing
+
+# CrewAI pipeline + services
 from backend.crew import run_pipeline
-from backend.models.schemas import (
-    GenerateRequest,
-    GenerationResult,
-    StatusResponse,
-)
+from backend.models.schemas import GenerateRequest, GenerationResult, StatusResponse
 from backend.services import normalizer, tts, renderer
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
@@ -30,7 +31,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -59,8 +63,6 @@ async def _save_photos(files: list[UploadFile], job_id: str) -> list[str]:
 
 def _run_job(job_id: str, listing_json: str, photo_paths: list[str]):
     """Background task: run the full crew pipeline and update job store."""
-    from backend.models.schemas import GenerateRequest
-
     try:
         _jobs[job_id] = StatusResponse(job_id=job_id, status="running", stage="Analyst")
 
@@ -119,7 +121,7 @@ def _run_job(job_id: str, listing_json: str, photo_paths: list[str]):
         raise
 
 
-# ── endpoints ─────────────────────────────────────────────────────────────────
+# ── base endpoints ────────────────────────────────────────────────────────────
 
 @app.get("/")
 def read_root() -> dict[str, str]:
@@ -130,6 +132,52 @@ def read_root() -> dict[str, str]:
 def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
 
+
+# ── listing intake (remote branch) ────────────────────────────────────────────
+
+@app.post("/api/listings", response_model=NormalizedListing)
+async def create_listing(
+    title: str = Form(...),
+    price: float = Form(...),
+    beds: int = Form(...),
+    baths: int = Form(...),
+    neighborhood: str = Form(...),
+    square_footage: Optional[int] = Form(None),
+    amenities: str = Form("[]"),
+    persona: Optional[str] = Form(None),
+    leasing_special: Optional[str] = Form(None),
+    photos: list[UploadFile] = File(default=[]),
+):
+    try:
+        amenities_list = json.loads(amenities)
+    except (json.JSONDecodeError, TypeError):
+        amenities_list = []
+
+    listing_input = ListingInput(
+        title=title,
+        price=price,
+        beds=beds,
+        baths=baths,
+        neighborhood=neighborhood,
+        square_footage=square_footage,
+        amenities=amenities_list,
+        persona=persona,
+        leasing_special=leasing_special,
+    )
+
+    result = await store_listing(listing_input, photos)
+    return result
+
+
+@app.get("/api/listings/{listing_id}", response_model=NormalizedListing)
+async def read_listing(listing_id: str):
+    listing = await get_listing(listing_id)
+    if listing is None:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    return listing
+
+
+# ── CrewAI generation pipeline ────────────────────────────────────────────────
 
 @app.post("/api/generate", response_model=StatusResponse)
 async def generate(
@@ -146,9 +194,7 @@ async def generate(
     photos: list[UploadFile] = File(default=[]),
 ):
     job_id = str(uuid.uuid4())
-
     photo_paths = await _save_photos(photos, job_id)
-
     amenity_list: list[str] = json.loads(amenities) if amenities else []
 
     req = GenerateRequest(
@@ -164,9 +210,7 @@ async def generate(
     )
 
     _jobs[job_id] = StatusResponse(job_id=job_id, status="pending")
-
-    listing_json = req.model_dump_json()
-    background_tasks.add_task(_run_job, job_id, listing_json, photo_paths)
+    background_tasks.add_task(_run_job, job_id, req.model_dump_json(), photo_paths)
 
     return StatusResponse(job_id=job_id, status="pending")
 

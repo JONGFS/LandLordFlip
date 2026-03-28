@@ -1,9 +1,6 @@
-"""
-Remote branch models (ListingInput, NormalizedListing, PhotoMeta).
-Imported as: from backend.models import ListingInput, NormalizedListing
-"""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
