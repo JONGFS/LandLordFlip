@@ -18,6 +18,7 @@ from typing import Any
 from crewai import Crew, LLM, Process, Task
 
 from backend.agents import analyst as analyst_module
+from backend.agents import brainrot_writer as brainrot_writer_module
 from backend.agents import critic as critic_module
 from backend.agents import director as director_module
 from backend.agents import hook_writer as hook_writer_module
@@ -55,9 +56,35 @@ def _safe_get(data: dict, key: str, default: Any = None) -> Any:
     return data.get(key, default)
 
 
+def _normalize_scene_durations(
+    scene_items: list[SceneItem], target_total: float = 30.0
+) -> list[SceneItem]:
+    if not scene_items:
+        return scene_items
+
+    total = sum(item.duration_sec for item in scene_items)
+    if total <= 0:
+        even = round(target_total / len(scene_items), 1)
+        for item in scene_items:
+            item.duration_sec = even
+        total = sum(item.duration_sec for item in scene_items)
+    else:
+        scale = target_total / total
+        for item in scene_items:
+            item.duration_sec = round(item.duration_sec * scale, 1)
+
+    correction = round(target_total - sum(item.duration_sec for item in scene_items), 1)
+    scene_items[-1].duration_sec = round(scene_items[-1].duration_sec + correction, 1)
+    return scene_items
+
+
 # ── crew factory ──────────────────────────────────────────────────────────────
 
-def run_pipeline(listing: ListingData, on_stage_change: Any = None) -> dict:
+def run_pipeline(
+    listing: ListingData,
+    on_stage_change: Any = None,
+    script_mode: str = "default",
+) -> dict:
     """
     Run the full CrewAI pipeline for a listing.
     Returns a dict with keys: market_positioning, hooks_and_scripts, scene_plan, critique.
@@ -67,7 +94,10 @@ def run_pipeline(listing: ListingData, on_stage_change: Any = None) -> dict:
 
     # Build agents
     analyst = analyst_module.build(llm)
-    hook_writer = hook_writer_module.build(llm)
+    writer_module = (
+        brainrot_writer_module if script_mode == "brainrot" else hook_writer_module
+    )
+    hook_writer = writer_module.build(llm)
     director = director_module.build(llm)
     critic = critic_module.build(llm)
 
@@ -101,7 +131,7 @@ def run_pipeline(listing: ListingData, on_stage_change: Any = None) -> dict:
             f"Rules:\n"
             f"- Exactly 3 hooks. Each under 12 words.\n"
             f"- At least 1 price-led hook, at least 1 lifestyle/location hook.\n"
-            f"- Each script: 45-90 words, ends with a CTA, uses only listing facts.\n"
+            f"- Each script: 75-95 words, aims for a full 30-second read, ends with a CTA, uses only listing facts.\n"
             f"- Pick the best variant (index 0, 1, or 2) and set selected_variant_index.\n\n"
             f"Output ONLY a JSON object with exactly these keys:\n"
             f"  hooks (array of 3 strings)\n"
@@ -121,12 +151,12 @@ def run_pipeline(listing: ListingData, on_stage_change: Any = None) -> dict:
     director_task = Task(
         description=(
             f"Using the selected script from the previous task, create a scene-by-scene "
-            f"storyboard for a 15-30 second vertical rental promo video.\n\n"
+            f"storyboard for a 30-second vertical rental promo video.\n\n"
             f"Available photo indexes: {photo_indexes}\n\n"
             f"Rules:\n"
             f"- Every scene must reference a real photo_index from: {photo_indexes}.\n"
-            f"- Scene durations must sum to between 15 and 30 seconds.\n"
-            f"- Each scene: 2.5-4.0 seconds.\n"
+            f"- Scene durations must sum to exactly 30.0 seconds.\n"
+            f"- Each scene: 3.0-5.0 seconds.\n"
             f"- First scene: strongest photo, hook overlay text.\n"
             f"- Last scene: CTA text, can reuse any photo.\n"
             f"- overlay_text: short (3-7 words).\n"
@@ -220,7 +250,9 @@ def run_pipeline(listing: ListingData, on_stage_change: Any = None) -> dict:
         )
         for s in _safe_get(raw_scenes, "scene_sequence", [])
     ]
-    scene_plan = ScenePlan(scene_sequence=scene_items)
+    scene_plan = ScenePlan(
+        scene_sequence=_normalize_scene_durations(scene_items, target_total=30.0)
+    )
 
     critique = CritiqueResult(
         confidence_score=int(_safe_get(raw_critique, "confidence_score", 75)),

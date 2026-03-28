@@ -16,12 +16,13 @@ import { useAuth } from './AuthContext';
 import AuthPage from './AuthPage';
 import LandingPage from './LandingPage';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_URL || '';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type Screen = 'input' | 'loading' | 'results';
 type Page = 'landing' | 'login' | 'signup';
+type ScriptMode = 'default' | 'brainrot';
 
 interface Photo {
   id: string;
@@ -35,6 +36,7 @@ interface SceneItem { photo_index: number; overlay_text: string; duration_sec: n
 
 interface GenerationResult {
   job_id: string;
+  script_mode: ScriptMode;
   hooks: string[];
   scripts: ScriptVariant[];
   selected_script_index: number;
@@ -65,7 +67,7 @@ const Navbar = ({ onReset, onSignOut }: { onReset: () => void; onSignOut: () => 
 
 // ── InputForm ──────────────────────────────────────────────────────────────────
 
-const InputForm = ({ onGenerate }: { onGenerate: (jobId: string, photos: Photo[]) => void }) => {
+const InputForm = ({ onGenerate }: { onGenerate: (jobId: string, photos: Photo[], scriptMode: ScriptMode) => void }) => {
   const [title, setTitle] = useState('');
   const [price, setPrice] = useState('');
   const [beds, setBeds] = useState('');
@@ -80,6 +82,7 @@ const InputForm = ({ onGenerate }: { onGenerate: (jobId: string, photos: Photo[]
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [scriptMode, setScriptMode] = useState<ScriptMode>('default');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const amenityOptions = ['Gym', 'Pool', 'Parking', 'Pet Friendly', 'Furnished', 'Rooftop'];
@@ -128,11 +131,12 @@ const InputForm = ({ onGenerate }: { onGenerate: (jobId: string, photos: Photo[]
       form.append('amenities', JSON.stringify(amenities));
       form.append('target_renter', targetRenter);
       form.append('leasing_special', leasingSpecial.trim());
+      form.append('script_mode', scriptMode);
       photos.forEach(p => form.append('photos', p.file));
       const res = await fetch(`${API_BASE}/api/generate`, { method: 'POST', body: form });
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail || 'Generation failed');
-      onGenerate(json.job_id, photos);
+      onGenerate(json.job_id, photos, scriptMode);
     } catch (err: any) {
       setSubmitError(err.message || 'Something went wrong');
     } finally {
@@ -265,8 +269,18 @@ const InputForm = ({ onGenerate }: { onGenerate: (jobId: string, photos: Photo[]
         <button onClick={handleSubmit} disabled={submitting}
           className="w-full btn-coral py-5 text-lg flex items-center justify-center gap-3 shadow-xl shadow-coral/10 disabled:opacity-50"
         >
-          {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <>Generate Promos <ChevronRight className="w-5 h-5" /></>}
+          {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <>{scriptMode === 'brainrot' ? 'Generate Chaos' : 'Generate Promos'} <ChevronRight className="w-5 h-5" /></>}
         </button>
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={() => setScriptMode(prev => prev === 'brainrot' ? 'default' : 'brainrot')}
+            className={`text-[10px] uppercase tracking-[0.35em] transition-colors ${scriptMode === 'brainrot' ? 'text-coral' : 'text-white/20 hover:text-white/50'}`}
+            title="Definitely do not click this"
+          >
+            {scriptMode === 'brainrot' ? 'Brain Rot Mode Armed' : 'Do Not Click'}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -274,20 +288,51 @@ const InputForm = ({ onGenerate }: { onGenerate: (jobId: string, photos: Photo[]
 
 // ── LoadingState ───────────────────────────────────────────────────────────────
 
-const STAGE_LABELS: Record<string, string> = {
-  pending: 'Queuing your request', Analyst: 'Analyzing your listing',
-  'Hook Writer': 'Writing opening hooks', Director: 'Building your storyboard',
-  Critic: 'Scoring the result', FrontendTTS: 'Synthesizing voice in browser',
+const STAGE_LABELS: Record<ScriptMode, Record<string, string>> = {
+  default: {
+    pending: 'Queuing your request',
+    Analyst: 'Analyzing your listing',
+    'Hook Writer': 'Writing opening hooks',
+    Director: 'Building your storyboard',
+    Critic: 'Scoring the result',
+    FrontendTTS: 'Synthesizing voice in browser',
+  },
+  brainrot: {
+    pending: 'Charging the cursed vibes',
+    Analyst: 'Vibe checking your listing',
+    'Hook Writer': 'Cooking maximum brain rot',
+    Director: 'Shuffling the chaos montage',
+    Critic: 'Judging the cringe levels',
+    FrontendTTS: 'Synthesizing the yap track',
+  },
 };
 
-const LoadingState = ({ jobId, onComplete, onError }: { jobId: string; onComplete: (r: GenerationResult, audioUrl: string | null) => void; onError: (m: string) => void }) => {
-  const stages = [
-    { key: 'Analyst', label: 'Listing Agent', sub: 'Analyzing your listing' },
-    { key: 'Hook Writer', label: 'Hook Agent', sub: 'Writing opening hooks' },
-    { key: 'Director', label: 'Storyboard Agent', sub: 'Mapping photos to scenes' },
-    { key: 'Critic', label: 'Critic Agent', sub: 'Scoring the result' },
-    { key: 'FrontendTTS', label: 'Voice Synthesis', sub: 'Generating narration in browser' },
-  ];
+const LoadingState = ({
+  jobId,
+  scriptMode,
+  onComplete,
+  onError,
+}: {
+  jobId: string;
+  scriptMode: ScriptMode;
+  onComplete: (r: GenerationResult, audioUrl: string | null) => void;
+  onError: (m: string) => void;
+}) => {
+  const stages = scriptMode === 'brainrot'
+    ? [
+        { key: 'Analyst', label: 'Aura Agent', sub: 'Clocking the listing energy' },
+        { key: 'Hook Writer', label: 'Brain Rot Goblin', sub: 'Writing unusable internet nonsense' },
+        { key: 'Director', label: 'Clip Farmer', sub: 'Stacking stills into pure delusion' },
+        { key: 'Critic', label: 'Cringe Inspector', sub: 'Scoring the mess' },
+        { key: 'FrontendTTS', label: 'Yap Synth', sub: 'Turning slop into speech' },
+      ]
+    : [
+        { key: 'Analyst', label: 'Listing Agent', sub: 'Analyzing your listing' },
+        { key: 'Hook Writer', label: 'Hook Agent', sub: 'Writing opening hooks' },
+        { key: 'Director', label: 'Storyboard Agent', sub: 'Mapping photos to scenes' },
+        { key: 'Critic', label: 'Critic Agent', sub: 'Scoring the result' },
+        { key: 'FrontendTTS', label: 'Voice Synthesis', sub: 'Generating narration in browser' },
+      ];
   const [currentStage, setCurrentStage] = useState('pending');
 
   useEffect(() => {
@@ -328,7 +373,7 @@ const LoadingState = ({ jobId, onComplete, onError }: { jobId: string; onComplet
         </div>
         <div className="space-y-2">
           <h2 className="text-2xl font-medium">Crafting your promos</h2>
-          <p className="text-sm text-white/40">{STAGE_LABELS[currentStage] ?? 'Processing…'}</p>
+          <p className="text-sm text-white/40">{STAGE_LABELS[scriptMode][currentStage] ?? 'Processing…'}</p>
         </div>
         <div className="space-y-4 text-left pt-4">
           {stages.map((stage, i) => {
@@ -394,7 +439,11 @@ const ResultsView = ({ result, photos, audioUrl, onReset }: { result: Generation
       <div className="flex flex-col md:flex-row items-center justify-between gap-8 pt-8">
         <div className="space-y-2">
           <h2 className="text-4xl font-medium">Your Promos are Ready</h2>
-          <p className="text-sm text-white/40">Audience: <span className="text-white/70">{result.market_positioning.target_audience}</span> · Angle: <span className="text-white/70">{result.market_positioning.video_angle}</span></p>
+          <p className="text-sm text-white/40">
+            Audience: <span className="text-white/70">{result.market_positioning.target_audience}</span> ·
+            Angle: <span className="text-white/70"> {result.market_positioning.video_angle}</span>
+            {result.script_mode === 'brainrot' && <span className="ml-2 inline-flex rounded-full border border-coral/40 bg-coral/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-coral">Brain Rot</span>}
+          </p>
         </div>
         <div className="flex gap-4">
           {[{ label: 'Confidence', value: result.confidence_score }, { label: 'Hooks', value: result.hooks.length }, { label: 'Scenes', value: result.scene_sequence.length }].map(s => (
@@ -502,9 +551,10 @@ export default function App() {
   const [submittedPhotos, setSubmittedPhotos] = useState<Photo[]>([]);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scriptMode, setScriptMode] = useState<ScriptMode>('default');
 
-  const handleGenerate = (id: string, photos: Photo[]) => {
-    setJobId(id); setSubmittedPhotos(photos); setError(null); setScreen('loading');
+  const handleGenerate = (id: string, photos: Photo[], mode: ScriptMode) => {
+    setJobId(id); setSubmittedPhotos(photos); setScriptMode(mode); setError(null); setScreen('loading');
   };
   const handleComplete = (res: GenerationResult, audio: string | null) => { setAudioUrl(audio); setResult(res); setScreen('results'); };
   const handleError = (msg: string) => { setError(msg); setScreen('input'); };
@@ -534,7 +584,7 @@ export default function App() {
           )}
           {screen === 'loading' && jobId && (
             <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <LoadingState jobId={jobId} onComplete={handleComplete} onError={handleError} />
+              <LoadingState jobId={jobId} scriptMode={scriptMode} onComplete={handleComplete} onError={handleError} />
             </motion.div>
           )}
           {screen === 'results' && result && (

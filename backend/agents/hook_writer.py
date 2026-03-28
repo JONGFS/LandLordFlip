@@ -5,8 +5,8 @@ def build(llm: LLM) -> Agent:
     return Agent(
         role="Short-Form Ad Copywriter",
         goal=(
-            "Write 3 distinct, social-native opening hooks and a matching 45-90 word "
-            "script for each hook that ends with a clear call-to-action. "
+            "Write 3 distinct, social-native opening hooks and a matching 75-95 word "
+            "script for each hook that targets a 30-second runtime and ends with a clear call-to-action. "
             "Hooks must feel like a pattern interrupt — not MLS copy."
         ),
         backstory=(

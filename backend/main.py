@@ -22,6 +22,10 @@ from backend.services import normalizer
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 OUTPUTS_DIR.mkdir(exist_ok=True)
 
+DEFAULT_CORS_REGEX = (
+    r"https?://.*"
+)
+
 app = FastAPI(
     title="LandlordFlip API",
     version="1.0.0",
@@ -34,6 +38,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",
     ],
+    allow_origin_regex=os.getenv("CORS_ALLOW_ORIGIN_REGEX", DEFAULT_CORS_REGEX),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -71,7 +76,11 @@ def _run_job(job_id: str, listing_json: str, photo_paths: list[str]):
         req = GenerateRequest(**json.loads(listing_json))
         listing = normalizer.normalize(req, photo_count=len(photo_paths))
 
-        pipeline_result = run_pipeline(listing, on_stage_change=on_stage)
+        pipeline_result = run_pipeline(
+            listing,
+            on_stage_change=on_stage,
+            script_mode=req.script_mode,
+        )
 
         positioning = pipeline_result["market_positioning"]
         hooks_result = pipeline_result["hooks_and_scripts"]
@@ -82,6 +91,7 @@ def _run_job(job_id: str, listing_json: str, photo_paths: list[str]):
 
         result = GenerationResult(
             job_id=job_id,
+            script_mode=req.script_mode,
             listing=listing,
             market_positioning=positioning,
             hooks=hooks_result.hooks,
@@ -171,8 +181,12 @@ async def generate(
     amenities: str = Form("[]"),
     target_renter: str = Form("Young Professional"),
     leasing_special: str = Form(None),
+    script_mode: str = Form("default"),
     photos: list[UploadFile] = File(default=[]),
 ):
+    if script_mode not in {"default", "brainrot"}:
+        raise HTTPException(status_code=422, detail="Invalid script mode")
+
     job_id = str(uuid.uuid4())
     photo_paths = await _save_photos(photos, job_id)
     amenity_list: list[str] = json.loads(amenities) if amenities else []
@@ -187,6 +201,7 @@ async def generate(
         amenities=amenity_list,
         target_renter=target_renter,
         leasing_special=leasing_special,
+        script_mode=script_mode,
     )
 
     _jobs[job_id] = StatusResponse(job_id=job_id, status="pending")

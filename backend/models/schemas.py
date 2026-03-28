@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -70,10 +70,12 @@ class GenerateRequest(BaseModel):
     amenities: list[str] = Field(default_factory=list)
     target_renter: str = "Young Professional"
     leasing_special: Optional[str] = None
+    script_mode: Literal["default", "brainrot"] = "default"
 
 
 class GenerationResult(BaseModel):
     job_id: str
+    script_mode: Literal["default", "brainrot"] = "default"
     listing: ListingData
     market_positioning: MarketPositioning
     hooks: list[str]

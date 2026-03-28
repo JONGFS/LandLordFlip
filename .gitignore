@@ -23,6 +23,7 @@ ENV/
 .coverage
 htmlcov/
 node_modules/
+backend/outputs/
 
 # Environment files
 .env
