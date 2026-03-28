@@ -5,21 +5,25 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Upload, 
-  Check, 
-  Loader2, 
-  ChevronRight, 
-  Plus, 
-  X, 
-  Download, 
+import {
+  Upload,
+  Check,
+  Loader2,
+  ChevronRight,
+  Plus,
+  X,
+  Download,
   RefreshCw,
   LayoutGrid,
   MapPin,
   DollarSign,
   Maximize,
-  Sparkles
+  Sparkles,
+  LogOut
 } from 'lucide-react';
+import { useAuth } from './AuthContext';
+import AuthPage from './AuthPage';
+import LandingPage from './LandingPage';
 
 // --- Types ---
 type Screen = 'input' | 'loading' | 'results';
@@ -32,7 +36,7 @@ interface Photo {
 
 // --- Components ---
 
-const Navbar = ({ onReset }: { onReset: () => void }) => (
+const Navbar = ({ onReset, onSignOut }: { onReset: () => void; onSignOut: () => void }) => (
   <nav className="flex items-center justify-between py-6 px-8 max-w-7xl mx-auto w-full">
     <div className="flex items-center gap-2 cursor-pointer" onClick={onReset}>
       <span className="logo text-2xl font-bold tracking-tight">
@@ -43,7 +47,9 @@ const Navbar = ({ onReset }: { onReset: () => void }) => (
       <a href="#" className="hover:text-white transition-colors">How it works</a>
       <a href="#" className="hover:text-white transition-colors">Pricing</a>
     </div>
-    <button className="btn-coral text-sm">Get Started</button>
+    <button onClick={onSignOut} className="btn-ghost text-sm flex items-center gap-2">
+      <LogOut className="w-4 h-4" /> Sign Out
+    </button>
   </nav>
 );
 
@@ -355,16 +361,45 @@ const ResultsView = ({ onReset }: { onReset: () => void }) => {
   );
 };
 
+type Page = 'landing' | 'login' | 'signup';
+
 export default function App() {
+  const { user, loading, signOut } = useAuth();
   const [screen, setScreen] = useState<Screen>('input');
+  const [page, setPage] = useState<Page>('landing');
 
   const handleGenerate = () => setScreen('loading');
   const handleComplete = () => setScreen('results');
   const handleReset = () => setScreen('input');
 
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-coral animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    if (page === 'login' || page === 'signup') {
+      return (
+        <AuthPage
+          defaultMode={page}
+          onBack={() => setPage('landing')}
+        />
+      );
+    }
+    return (
+      <LandingPage
+        onLogin={() => setPage('login')}
+        onSignUp={() => setPage('signup')}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col selection:bg-coral/30 selection:text-coral">
-      <Navbar onReset={handleReset} />
+      <Navbar onReset={handleReset} onSignOut={signOut} />
       
       <main className="flex-1 relative overflow-x-hidden">
         <AnimatePresence mode="wait">
