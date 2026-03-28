@@ -1,45 +1,46 @@
-# ClawFlow
+# LandlordFlip
 
-Minimal Python API scaffold for local development, GitHub, and deployment.
+This repo is now organized as a simple full-stack workspace for building `LandlordFlip`.
 
-## Quick start
+## Project structure
+
+```text
+backend/   FastAPI API scaffold
+frontend/  Vite + React app for LandlordFlip
+Procfile   Deployment entrypoint for the backend
+```
+
+## Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend runs on `http://localhost:3000`.
+
+## Backend
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
+pip install -r backend/requirements.txt
+python backend/main.py
 ```
 
-The API will start on `http://localhost:8000`.
+The API runs on `http://localhost:8000`.
 
-## Endpoints
+## Notes
 
-- `GET /` returns a basic welcome message
-- `GET /health` returns a healthcheck response
+- `frontend/` contains the current LandlordFlip product UI.
+- `backend/` is a clean API scaffold you can extend as the app grows.
+- The frontend and backend are separated on purpose so product work can start without root-level clutter.
 
 ## Deployment
 
-This repo includes:
-
-- `.gitignore` for Python projects
-- `requirements.txt` for dependency installation
-- `Procfile` for common PaaS-style deployments
-- `.github/workflows/ci.yml` for a basic GitHub Actions check
-
-For most hosts, set the start command to:
+For PaaS-style backend deployments, use:
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port $PORT
-```
-
-## GitHub basics
-
-```bash
-git init
-git add .
-git commit -m "Initial deployment-ready scaffold"
-git branch -M main
-git remote add origin <your-repo-url>
-git push -u origin main
+uvicorn backend.main:app --host 0.0.0.0 --port $PORT
 ```

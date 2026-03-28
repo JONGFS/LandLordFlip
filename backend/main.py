@@ -4,15 +4,15 @@ from fastapi import FastAPI
 
 
 app = FastAPI(
-    title="ClawFlow API",
+    title="LandlordFlip API",
     version="0.1.0",
-    description="Minimal API scaffold for deployment.",
+    description="Backend scaffold for the LandlordFlip workspace.",
 )
 
 
 @app.get("/")
 def read_root() -> dict[str, str]:
-    return {"message": "ClawFlow API is running"}
+    return {"message": "LandlordFlip API is running"}
 
 
 @app.get("/health")
@@ -25,4 +25,4 @@ if __name__ == "__main__":
 
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+    uvicorn.run("backend.main:app", host=host, port=port, reload=True)
