@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Upload, Check, Loader2, ChevronRight, Plus, X, Download, RefreshCw,
   LayoutGrid, MapPin, DollarSign, Maximize, Sparkles, LogOut, Bed, Bath,
+  Bookmark, Play, ExternalLink, Trash2,
 } from 'lucide-react';
 import { Player } from '@remotion/player';
 import { VideoComposition, VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS } from './VideoComposition';
@@ -15,12 +16,19 @@ import type { VideoCompositionProps } from './VideoComposition';
 import { useAuth } from './AuthContext';
 import AuthPage from './AuthPage';
 import LandingPage from './LandingPage';
+import { exportToMp4 } from './exportVideo';
+import {
+  deleteSavedVideo,
+  listSavedVideos,
+  uploadGeneratedVideo,
+} from './uploadVideo';
+import type { SavedVideo } from './uploadVideo';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Screen = 'input' | 'loading' | 'results';
+type Screen = 'input' | 'loading' | 'results' | 'saves';
 type Page = 'landing' | 'login' | 'signup';
 type ScriptMode = 'default' | 'brainrot';
 
@@ -50,14 +58,24 @@ interface GenerationResult {
 
 // ── Navbar ─────────────────────────────────────────────────────────────────────
 
-const Navbar = ({ onReset, onSignOut }: { onReset: () => void; onSignOut: () => void }) => (
-  <nav className="flex items-center justify-between py-6 px-8 max-w-7xl mx-auto w-full">
+const Navbar = ({ onReset, onSaves, onSignOut }: { onReset: () => void; onSaves: () => void; onSignOut: () => void }) => (
+  <nav className="flex flex-wrap items-center justify-between gap-3 py-6 px-4 sm:px-8 max-w-7xl mx-auto w-full">
     <div className="flex items-center gap-2 cursor-pointer" onClick={onReset}>
       <span className="logo text-2xl font-bold tracking-tight">LandlordFlip<span className="text-coral">.</span></span>
     </div>
     <div className="hidden md:flex items-center gap-8 text-sm font-medium text-white/60">
-      <a href="#" className="hover:text-white transition-colors">How it works</a>
-      <a href="#" className="hover:text-white transition-colors">Pricing</a>
+      <button onClick={onReset} className="hover:text-white transition-colors">Create</button>
+      <button onClick={onSaves} className="hover:text-white transition-colors flex items-center gap-1.5">
+        <Bookmark className="w-3.5 h-3.5" /> Saves
+      </button>
+    </div>
+    <div className="flex items-center gap-2 md:hidden">
+      <button onClick={onReset} className="btn-ghost text-xs flex items-center gap-1.5 px-3 py-2">
+        <Plus className="w-3.5 h-3.5" /> Create
+      </button>
+      <button onClick={onSaves} className="btn-ghost text-xs flex items-center gap-1.5 px-3 py-2">
+        <Bookmark className="w-3.5 h-3.5" /> Saves
+      </button>
     </div>
     <button onClick={onSignOut} className="btn-ghost text-sm flex items-center gap-2">
       <LogOut className="w-4 h-4" /> Sign Out
@@ -397,11 +415,200 @@ const LoadingState = ({
   );
 };
 
+// ── SavesPage ─────────────────────────────────────────────────────────────────
+
+const SavesPage = ({ onBack }: { onBack: () => void }) => {
+  const { user, session } = useAuth();
+  const [videos, setVideos] = useState<SavedVideo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [playingUrl, setPlayingUrl] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  const fetchVideos = async () => {
+    setLoading(true);
+    setFeedback(null);
+    try {
+      if (!user || !session?.access_token) {
+        setVideos([]);
+        return;
+      }
+
+      setVideos(await listSavedVideos(session.access_token));
+    } catch (err) {
+      console.error('Failed to fetch saved videos:', err);
+      setVideos([]);
+      setFeedback(err instanceof Error ? err.message : 'Failed to load saved videos');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchVideos(); }, [session?.access_token, user?.id]);
+
+  const handleDelete = async (path: string) => {
+    if (!confirm('Delete this video? This cannot be undone.')) return;
+    if (!session?.access_token) {
+      setFeedback('Your session expired. Please sign in again.');
+      return;
+    }
+
+    const deletedVideo = videos.find((video) => video.path === path);
+    const previousVideos = videos;
+    const shouldClearPlayer = deletedVideo?.signedUrl === playingUrl;
+    setDeleting(path);
+    setFeedback(null);
+    if (shouldClearPlayer) {
+      setPlayingUrl(null);
+    }
+    setVideos((prev) => prev.filter((video) => video.path !== path));
+    try {
+      await deleteSavedVideo(session.access_token, path);
+    } catch (err) {
+      console.error('Delete failed:', err);
+      try {
+        const refreshedVideos = await listSavedVideos(session.access_token);
+        setVideos(refreshedVideos);
+        if (refreshedVideos.some((video) => video.path === path)) {
+          if (shouldClearPlayer) {
+            setPlayingUrl(deletedVideo?.signedUrl ?? null);
+          }
+          setFeedback(err instanceof Error ? err.message : 'Delete failed');
+        }
+      } catch (refreshErr) {
+        console.error('Failed to verify delete state:', refreshErr);
+        setVideos(previousVideos);
+        if (shouldClearPlayer) {
+          setPlayingUrl(deletedVideo?.signedUrl ?? null);
+        }
+        setFeedback(err instanceof Error ? err.message : 'Delete failed');
+      }
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const formatSize = (bytes: number) => {
+    if (!bytes) return '';
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const formatDate = (iso: string) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-5xl mx-auto px-8 pb-20 pt-8 space-y-8">
+      <div className="flex items-center justify-between">
+        <div className="space-y-1">
+          <h2 className="text-3xl font-medium">Saved Videos</h2>
+          <p className="text-sm text-white/40">{videos.length} video{videos.length !== 1 ? 's' : ''} in cloud storage</p>
+        </div>
+        <button onClick={onBack} className="btn-ghost text-sm flex items-center gap-2">
+          <Plus className="w-4 h-4" /> New Promo
+        </button>
+      </div>
+      {feedback && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {feedback}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-8 h-8 text-coral animate-spin" />
+        </div>
+      ) : videos.length === 0 ? (
+        <div className="text-center py-20 space-y-4">
+          <Bookmark className="w-12 h-12 text-white/20 mx-auto" />
+          <p className="text-white/40">No saved videos yet</p>
+          <p className="text-white/30 text-sm">Export a promo to see it here</p>
+          <button onClick={onBack} className="btn-coral mt-4">Create Your First Promo</button>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {playingUrl && (
+            <div className="card-surface p-4 rounded-xl border border-coral/30">
+              <video
+                src={playingUrl}
+                controls
+                autoPlay
+                className="w-full max-h-[70vh] rounded-lg bg-black mx-auto"
+                style={{ aspectRatio: '9/16', maxWidth: 400 }}
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {videos.map((video) => (
+              <div key={video.path} className="card-surface rounded-xl overflow-hidden border border-white/10 hover:border-coral/30 transition-colors group">
+                <div
+                  className="aspect-[9/16] bg-black/50 flex items-center justify-center cursor-pointer relative"
+                  onClick={() => setPlayingUrl(playingUrl === video.signedUrl ? null : video.signedUrl)}
+                >
+                  <video
+                    src={video.signedUrl}
+                    muted
+                    preload="metadata"
+                    className="w-full h-full object-cover opacity-70 group-hover:opacity-100 transition-opacity"
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-14 h-14 rounded-full bg-coral/80 backdrop-blur flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Play className="w-6 h-6 text-white ml-1" />
+                    </div>
+                  </div>
+                </div>
+                <div className="p-4 space-y-3">
+                  <div className="flex items-center justify-between text-xs text-white/40">
+                    <span>{formatDate(video.createdAt)}</span>
+                    <span>{formatSize(video.size)}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <a
+                      href={video.signedUrl}
+                      download
+                      className="btn-coral flex-1 text-xs flex items-center justify-center gap-1.5 py-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Download className="w-3.5 h-3.5" /> Download
+                    </a>
+                    <a
+                      href={video.signedUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-ghost text-xs flex items-center justify-center gap-1.5 py-2 px-3"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDelete(video.path); }}
+                      disabled={deleting === video.path}
+                      className="btn-ghost text-xs flex items-center justify-center gap-1.5 py-2 px-3 hover:text-red-400 hover:border-red-400/30"
+                    >
+                      {deleting === video.path ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+};
+
 // ── ResultsView ────────────────────────────────────────────────────────────────
 
 const ResultsView = ({ result, photos, audioUrl, onReset }: { result: GenerationResult; photos: Photo[]; audioUrl: string | null; onReset: () => void }) => {
+  const { session } = useAuth();
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'failed' | null>(null);
   const canExport = typeof window.VideoEncoder !== 'undefined';
 
   const photoUrls = photos.map(p => p.url);
@@ -418,15 +625,41 @@ const ResultsView = ({ result, photos, audioUrl, onReset }: { result: Generation
     }
     setExporting(true);
     setExportProgress(0);
+    setSaveStatus(null);
     try {
-      const { convertMedia } = await import('@remotion/webcodecs');
-      // WebCodecs-based export — uses convertMedia for browser rendering
-      // Note: full browser-side rendering with Remotion requires Remotion Studio or Lambda;
-      // convertMedia handles media conversion. For now, we provide the Player preview.
-      alert('Full MP4 export coming soon. Use the Player preview to review your video.');
+      const blob = await exportToMp4({
+        scenes: result.scene_sequence,
+        photoUrls,
+        audioUrl,
+        fps: VIDEO_FPS,
+        width: VIDEO_WIDTH,
+        height: VIDEO_HEIGHT,
+        totalFrames,
+        onProgress: setExportProgress,
+      });
+
+      // Trigger browser download
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `clawflow-promo.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      // Save to the user's private cloud library
+      try {
+        if (!session?.access_token) throw new Error('Must be signed in to save');
+        await uploadGeneratedVideo(session.access_token, blob);
+        setSaveStatus('saved');
+      } catch (uploadErr) {
+        console.warn('Video save failed after download:', uploadErr);
+        setSaveStatus('failed');
+      }
     } catch (err) {
       console.error('Export failed:', err);
-      alert('Export failed. Please try again.');
+      alert('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
       setExporting(false);
     }
@@ -501,14 +734,27 @@ const ResultsView = ({ result, photos, audioUrl, onReset }: { result: Generation
 
             <div className="flex flex-col gap-3">
               {isSelected(idx) ? (
-                <button onClick={handleExport} disabled={exporting || !canExport}
-                  className={`btn-coral w-full flex items-center justify-center gap-2 ${!canExport ? 'opacity-40 cursor-not-allowed' : ''}`}
-                >
-                  {exporting
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Exporting {exportProgress}%</>
-                    : <><Download className="w-4 h-4" /> Export MP4</>
-                  }
-                </button>
+                <div className="space-y-2">
+                  <button onClick={handleExport} disabled={exporting || !canExport}
+                    className={`btn-coral w-full flex items-center justify-center gap-2 ${!canExport ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  >
+                    {exporting
+                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Exporting {exportProgress}%</>
+                      : <><Download className="w-4 h-4" /> Export MP4</>
+                    }
+                  </button>
+                  {exporting && (
+                    <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                      <div className="bg-coral h-full rounded-full transition-all duration-300" style={{ width: `${exportProgress}%` }} />
+                    </div>
+                  )}
+                  {saveStatus === 'saved' && (
+                    <p className="text-xs text-green-400 text-center">Saved privately to your cloud library</p>
+                  )}
+                  {saveStatus === 'failed' && (
+                    <p className="text-xs text-yellow-300 text-center">Downloaded locally, but cloud save failed</p>
+                  )}
+                </div>
               ) : (
                 <button className="btn-coral w-full flex items-center justify-center gap-2 opacity-40 cursor-not-allowed"><Download className="w-4 h-4" /> Download Assets</button>
               )}
@@ -559,6 +805,7 @@ export default function App() {
   const handleComplete = (res: GenerationResult, audio: string | null) => { setAudioUrl(audio); setResult(res); setScreen('results'); };
   const handleError = (msg: string) => { setError(msg); setScreen('input'); };
   const handleReset = () => { setScreen('input'); setJobId(null); setResult(null); setAudioUrl(null); setError(null); };
+  const handleSaves = () => { setScreen('saves'); };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 text-coral animate-spin" /></div>;
 
@@ -569,7 +816,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col selection:bg-coral/30 selection:text-coral">
-      <Navbar onReset={handleReset} onSignOut={signOut} />
+      <Navbar onReset={handleReset} onSaves={handleSaves} onSignOut={signOut} />
       {error && (
         <div className="max-w-7xl mx-auto px-8 w-full">
           <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-red-400 text-sm">{error}</div>
@@ -590,6 +837,11 @@ export default function App() {
           {screen === 'results' && result && (
             <motion.div key="results" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}>
               <ResultsView result={result} photos={submittedPhotos} audioUrl={audioUrl} onReset={handleReset} />
+            </motion.div>
+          )}
+          {screen === 'saves' && (
+            <motion.div key="saves" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}>
+              <SavesPage onBack={handleReset} />
             </motion.div>
           )}
         </AnimatePresence>

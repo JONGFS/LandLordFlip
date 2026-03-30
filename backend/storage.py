@@ -4,6 +4,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import UploadFile
@@ -16,6 +17,8 @@ from backend.validation import flag_missing_fields
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 STORAGE_BUCKET = "listing-photos"
+VIDEO_BUCKET = "generated-videos"
+SIGNED_VIDEO_URL_TTL_SECONDS = 60 * 60
 
 _client: Client | None = None
 
@@ -35,6 +38,10 @@ def _get_client() -> Client:
 
     _client = create_client(url, key)
     return _client
+
+
+def get_supabase_client() -> Client:
+    return _get_client()
 
 
 async def upload_photos(
@@ -74,6 +81,81 @@ async def upload_photos(
         )
 
     return photos
+
+
+def _assert_video_path_owner(user_id: str, path: str) -> None:
+    if not path.startswith(f"{user_id}/"):
+        raise ValueError("Video does not belong to the authenticated user")
+
+
+def _build_saved_video(path: str, file_obj: dict[str, Any]) -> dict[str, Any]:
+    client = _get_client()
+    signed = client.storage.from_(VIDEO_BUCKET).create_signed_url(
+        path, SIGNED_VIDEO_URL_TTL_SECONDS
+    )
+    metadata = file_obj.get("metadata") or {}
+    return {
+        "path": path,
+        "signed_url": signed.get("signedURL") or signed.get("signedUrl", ""),
+        "created_at": file_obj.get("created_at") or file_obj.get("updated_at") or "",
+        "size": int(metadata.get("size") or 0),
+    }
+
+
+def upload_generated_video(
+    user_id: str, content: bytes, content_type: str = "video/mp4"
+) -> dict[str, Any]:
+    client = _get_client()
+    job_id = uuid.uuid4().hex
+    filename = f"{int(datetime.now(timezone.utc).timestamp() * 1000)}.mp4"
+    path = f"{user_id}/{job_id}/{filename}"
+
+    client.storage.from_(VIDEO_BUCKET).upload(
+        path=path,
+        file=content,
+        file_options={"content-type": content_type},
+    )
+
+    info = client.storage.from_(VIDEO_BUCKET).info(path)
+    return _build_saved_video(path, info)
+
+
+def list_generated_videos(user_id: str) -> list[dict[str, Any]]:
+    client = _get_client()
+    bucket = client.storage.from_(VIDEO_BUCKET)
+    videos: list[dict[str, Any]] = []
+    root_entries = bucket.list(
+        user_id,
+        {"limit": 100, "sortBy": {"column": "created_at", "order": "desc"}},
+    )
+
+    for entry in root_entries:
+        name = entry.get("name")
+        if not name:
+            continue
+
+        if name.endswith(".mp4"):
+            videos.append(_build_saved_video(f"{user_id}/{name}", entry))
+            continue
+
+        folder_path = f"{user_id}/{name}"
+        child_entries = bucket.list(
+            folder_path,
+            {"limit": 100, "sortBy": {"column": "created_at", "order": "desc"}},
+        )
+        for child in child_entries:
+            child_name = child.get("name")
+            if not child_name or not child_name.endswith(".mp4"):
+                continue
+            videos.append(_build_saved_video(f"{folder_path}/{child_name}", child))
+
+    videos.sort(key=lambda item: item["created_at"], reverse=True)
+    return videos
+
+
+def delete_generated_video(user_id: str, path: str) -> None:
+    _assert_video_path_owner(user_id, path)
+    _get_client().storage.from_(VIDEO_BUCKET).remove([path])
 
 
 async def store_listing(

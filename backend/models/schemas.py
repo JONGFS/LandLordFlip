@@ -94,3 +94,14 @@ class StatusResponse(BaseModel):
     stage: Optional[str] = None
     result: Optional[GenerationResult] = None
     error: Optional[str] = None
+
+
+class SavedVideo(BaseModel):
+    path: str
+    signed_url: str
+    created_at: str
+    size: int = 0
+
+
+class SavedVideosResponse(BaseModel):
+    videos: list[SavedVideo] = Field(default_factory=list)
