@@ -5,18 +5,40 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
 # Remote branch models + storage
 from backend.models import ListingInput, NormalizedListing
-from backend.storage import store_listing, get_listing
+from backend.storage import (
+    delete_generated_video,
+    get_listing,
+    get_supabase_client,
+    list_generated_videos,
+    store_listing,
+    upload_generated_video,
+)
 
 # CrewAI pipeline + services
 from backend.crew import run_pipeline
-from backend.models.schemas import GenerateRequest, GenerationResult, StatusResponse
+from backend.models.schemas import (
+    GenerateRequest,
+    GenerationResult,
+    SavedVideo,
+    SavedVideosResponse,
+    StatusResponse,
+)
 from backend.services import normalizer
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
@@ -118,6 +140,30 @@ def _run_job(job_id: str, listing_json: str, photo_paths: list[str]):
     except Exception as exc:
         _jobs[job_id] = StatusResponse(job_id=job_id, status="error", error=str(exc))
         raise
+
+
+def _extract_access_token(authorization: Optional[str] = Header(default=None)) -> str:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+
+    return token
+
+
+def _require_user_id(access_token: str = Depends(_extract_access_token)) -> str:
+    try:
+        user_response = get_supabase_client().auth.get_user(access_token)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid Supabase session") from exc
+
+    user = user_response.user if user_response else None
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid Supabase session")
+
+    return user.id
 
 
 # ── base endpoints ────────────────────────────────────────────────────────────
@@ -225,6 +271,53 @@ def get_status(job_id: str) -> StatusResponse:
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@app.get("/api/videos", response_model=SavedVideosResponse)
+def get_saved_videos(user_id: str = Depends(_require_user_id)) -> SavedVideosResponse:
+    return SavedVideosResponse(videos=list_generated_videos(user_id))
+
+
+@app.post("/api/videos", response_model=SavedVideo)
+async def save_video(
+    file: UploadFile = File(...),
+    user_id: str = Depends(_require_user_id),
+) -> SavedVideo:
+    if file.content_type not in {None, "video/mp4"}:
+        raise HTTPException(status_code=415, detail="Only MP4 uploads are supported")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Video upload was empty")
+
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Video exceeds the 50MB limit")
+
+    try:
+        video = upload_generated_video(
+            user_id=user_id,
+            content=content,
+            content_type=file.content_type or "video/mp4",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to save video") from exc
+
+    return SavedVideo(**video)
+
+
+@app.delete("/api/videos")
+def remove_saved_video(
+    path: str,
+    user_id: str = Depends(_require_user_id),
+) -> dict[str, bool]:
+    try:
+        delete_generated_video(user_id, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to delete video") from exc
+
+    return {"ok": True}
 
 
 
